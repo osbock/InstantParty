@@ -1,7 +1,7 @@
 /**
  * \file MP3Shield_Library_Demo.ino
  *
- * \brief Example sketch of using the MP3Shield Arduino driver
+ * \brief Example sketch of using the MP3Shield Arduino driver, demonstrating all methods and functions.
  * \remarks comments are implemented with Doxygen Markdown format
  *
  * \author Bill Porter
@@ -68,13 +68,16 @@ void setup() {
 
   Serial.begin(115200);
 
+  Serial.print(F("F_CPU = "));
+  Serial.println(F_CPU);
   Serial.print(F("Free RAM = ")); // available in Version 1.0 F() bases the string to into Flash, to use less SRAM.
   Serial.print(FreeRam(), DEC);  // FreeRam() is provided by SdFatUtil.h
-  Serial.println(F(" Should be a base line of 1040, on ATmega328 when using INTx"));
+  Serial.println(F(" Should be a base line of 1028, on ATmega328 when using INTx"));
 
 
   //Initialize the SdCard.
-  if(!sd.begin(SD_SEL, SPI_HALF_SPEED)) sd.initErrorHalt();
+  if(!sd.begin(SD_SEL, SPI_FULL_SPEED)) sd.initErrorHalt();
+  // depending upon your SdCard environment, SPI_HAVE_SPEED may work better.
   if(!sd.chdir("/")) sd.errorHalt("sd.chdir");
 
   //Initialize the MP3 Player Shield
@@ -90,7 +93,7 @@ void setup() {
     }
   }
 
-#if (0)
+#if defined(__BIOFEEDBACK_MEGA__) // or other reasons, of your choosing.
   // Typically not used by most shields, hence commented out.
   Serial.println(F("Applying ADMixer patch."));
   if(MP3player.ADMixerLoad("admxster.053") == 0) {
@@ -132,6 +135,8 @@ void loop() {
 
   delay(100);
 }
+
+uint32_t  millis_prv;
 
 //------------------------------------------------------------------------------
 /**
@@ -294,14 +299,6 @@ void parse_menu(byte key_command) {
       Serial.println(F("Not Playing!"));
     }
 
-  } else if(key_command == 'r') {
-    MP3player.resumeMusic(2000);
-
-  } else if(key_command == 'R') {
-    MP3player.stopTrack();
-    MP3player.vs_init();
-    Serial.println(F("Reseting VS10xx chip"));
-
   } else if(key_command == 't') {
     int8_t teststate = MP3player.enableTestSineWave(126);
     if(teststate == -1) {
@@ -313,6 +310,49 @@ void parse_menu(byte key_command) {
       Serial.println(F("Disabling Test Sine Wave"));
     }
 
+  } else if(key_command == 'S') {
+    Serial.println(F("Current State of VS10xx is."));
+    Serial.print(F("isPlaying() = "));
+    Serial.println(MP3player.isPlaying());
+
+    Serial.print(F("getState() = "));
+    switch (MP3player.getState()) {
+    case uninitialized:
+      Serial.print(F("uninitialized"));
+      break;
+    case initialized:
+      Serial.print(F("initialized"));
+      break;
+    case deactivated:
+      Serial.print(F("deactivated"));
+      break;
+    case loading:
+      Serial.print(F("loading"));
+      break;
+    case ready:
+      Serial.print(F("ready"));
+      break;
+    case playback:
+      Serial.print(F("playback"));
+      break;
+    case paused_playback:
+      Serial.print(F("paused_playback"));
+      break;
+    case testing_memory:
+      Serial.print(F("testing_memory"));
+      break;
+    case testing_sinewave:
+      Serial.print(F("testing_sinewave"));
+      break;
+    }
+    Serial.println();
+
+   } else if(key_command == 'b') {
+    Serial.println(F("Playing Static MIDI file."));
+    MP3player.SendSingleMIDInote();
+    Serial.println(F("Ended Static MIDI file."));
+
+#if !defined(__AVR_ATmega32U4__)
   } else if(key_command == 'm') {
       uint16_t teststate = MP3player.memoryTest();
     if(teststate == -1) {
@@ -338,16 +378,13 @@ void parse_menu(byte key_command) {
     Serial.print(F("earspeaker to "));
     Serial.println(earspeaker, DEC);
 
-  } else if(key_command == 'M') {
-    uint16_t monostate = MP3player.getMonoMode();
-    Serial.print(F("Mono Mode "));
-    if(monostate == 0) {
-      MP3player.setMonoMode(1);
-      Serial.println(F("Enabled."));
-    } else {
-      MP3player.setMonoMode(0);
-      Serial.println(F("Disabled."));
-    }
+  } else if(key_command == 'r') {
+    MP3player.resumeMusic(2000);
+
+  } else if(key_command == 'R') {
+    MP3player.stopTrack();
+    MP3player.vs_init();
+    Serial.println(F("Reseting VS10xx chip"));
 
   } else if(key_command == 'g') {
     int32_t offset_ms = 20000; // Note this is just an example, try your own number.
@@ -392,45 +429,9 @@ void parse_menu(byte key_command) {
       Serial.println(F("Disabled."));
     }
 
-  } else if(key_command == 'S') {
-    Serial.println(F("Current State of VS10xx is."));
-    Serial.print(F("isPlaying() = "));
-    Serial.println(MP3player.isPlaying());
-
-    Serial.print(F("getState() = "));
-    switch (MP3player.getState()) {
-    case uninitialized:
-      Serial.print(F("uninitialized"));
-      break;
-    case initialized:
-      Serial.print(F("initialized"));
-      break;
-    case deactivated:
-      Serial.print(F("deactivated"));
-      break;
-    case loading:
-      Serial.print(F("loading"));
-      break;
-    case ready:
-      Serial.print(F("ready"));
-      break;
-    case playback:
-      Serial.print(F("playback"));
-      break;
-    case paused_playback:
-      Serial.print(F("paused_playback"));
-      break;
-    case testing_memory:
-      Serial.print(F("testing_memory"));
-      break;
-    case testing_sinewave:
-      Serial.print(F("testing_sinewave"));
-      break;
-    }
-    Serial.println();
-
   } else if(key_command == 'V') {
     MP3player.setVUmeter(1);
+    Serial.println(F("Use \"No line ending\""));
     Serial.print(F("VU meter = "));
     Serial.println(MP3player.getVUmeter());
     Serial.println(F("Hit Any key to stop."));
@@ -451,12 +452,83 @@ void parse_menu(byte key_command) {
     Serial.print(F("VU meter = "));
     Serial.println(MP3player.getVUmeter());
 
+  } else if(key_command == 'T') {
+    uint16_t TrebleFrequency = MP3player.getTrebleFrequency();
+    Serial.print(F("Former TrebleFrequency = "));
+    Serial.println(TrebleFrequency, DEC);
+    if (TrebleFrequency >= 15000) { // Range is from 0 - 1500Hz
+      TrebleFrequency = 0;
+    } else {
+      TrebleFrequency += 1000;
+    }
+    MP3player.setTrebleFrequency(TrebleFrequency);
+    Serial.print(F("New TrebleFrequency = "));
+    Serial.println(MP3player.getTrebleFrequency(), DEC);
+
+  } else if(key_command == 'E') {
+    int8_t TrebleAmplitude = MP3player.getTrebleAmplitude();
+    Serial.print(F("Former TrebleAmplitude = "));
+    Serial.println(TrebleAmplitude, DEC);
+    if (TrebleAmplitude >= 7) { // Range is from -8 - 7dB
+      TrebleAmplitude = -8;
+    } else {
+      TrebleAmplitude++;
+    }
+    MP3player.setTrebleAmplitude(TrebleAmplitude);
+    Serial.print(F("New TrebleAmplitude = "));
+    Serial.println(MP3player.getTrebleAmplitude(), DEC);
+
+  } else if(key_command == 'B') {
+    uint16_t BassFrequency = MP3player.getBassFrequency();
+    Serial.print(F("Former BassFrequency = "));
+    Serial.println(BassFrequency, DEC);
+    if (BassFrequency >= 150) { // Range is from 20hz - 150hz
+      BassFrequency = 0;
+    } else {
+      BassFrequency += 10;
+    }
+    MP3player.setBassFrequency(BassFrequency);
+    Serial.print(F("New BassFrequency = "));
+    Serial.println(MP3player.getBassFrequency(), DEC);
+
+  } else if(key_command == 'C') {
+    uint16_t BassAmplitude = MP3player.getBassAmplitude();
+    Serial.print(F("Former BassAmplitude = "));
+    Serial.println(BassAmplitude, DEC);
+    if (BassAmplitude >= 15) { // Range is from 0 - 15dB
+      BassAmplitude = 0;
+    } else {
+      BassAmplitude++;
+    }
+    MP3player.setBassAmplitude(BassAmplitude);
+    Serial.print(F("New BassAmplitude = "));
+    Serial.println(MP3player.getBassAmplitude(), DEC);
+
+  } else if(key_command == 'M') {
+    uint16_t monostate = MP3player.getMonoMode();
+    Serial.print(F("Mono Mode "));
+    if(monostate == 0) {
+      MP3player.setMonoMode(1);
+      Serial.println(F("Enabled."));
+    } else {
+      MP3player.setMonoMode(0);
+      Serial.println(F("Disabled."));
+    }
+#endif
+
   } else if(key_command == 'h') {
     help();
   }
 
   // print prompt after key stroke has been processed.
-  Serial.println(F("Enter 1-9,f,F,s,d,+,-,i,>,<,p,r,R,t,m,M,g,k,h,O,o,D,S,V :"));
+  Serial.print(F("Time since last command: "));  
+  Serial.println((float) (millis() -  millis_prv)/1000, 2);  
+  millis_prv = millis();
+  Serial.print(F("Enter s,1-9,+,-,>,<,f,F,d,i,p,t,S,b"));
+#if !defined(__AVR_ATmega32U4__)
+  Serial.print(F(",m,e,r,R,g,k,O,o,D,V,B,C,T,E,M:"));
+#endif
+  Serial.println(F(",h :"));
 }
 
 //------------------------------------------------------------------------------
@@ -477,20 +549,27 @@ void help() {
   Serial.println(F(" [+ or -] to change volume"));
   Serial.println(F(" [> or <] to increment or decrement play speed by 1 factor"));
   Serial.println(F(" [i] retrieve current audio information (partial list)"));
-  Serial.println(F(" [e] increment Spatial EarSpeaker, default is 0, wraps after 4"));
   Serial.println(F(" [p] to pause."));
-  Serial.println(F(" [r] resumes play from 2s from begin of file"));
-  Serial.println(F(" [R] Resets and initializes VS10xx chip."));
   Serial.println(F(" [t] to toggle sine wave test"));
+  Serial.println(F(" [S] Show State of Device."));
+  Serial.println(F(" [b] Play a MIDI File Beep"));
+#if !defined(__AVR_ATmega32U4__)
+  Serial.println(F(" [e] increment Spatial EarSpeaker, default is 0, wraps after 4"));
   Serial.println(F(" [m] perform memory test. reset is needed after to recover."));
   Serial.println(F(" [M] Toggle between Mono and Stereo Output."));
   Serial.println(F(" [g] Skip to a predetermined offset of ms in current track."));
   Serial.println(F(" [k] Skip a predetermined number of ms in current track."));
-  Serial.println(F(" [O} turns OFF the VS10xx into low power reset."));
-  Serial.println(F(" [o} turns ON the VS10xx out of low power reset."));
+  Serial.println(F(" [r] resumes play from 2s from begin of file"));
+  Serial.println(F(" [R] Resets and initializes VS10xx chip."));
+  Serial.println(F(" [O] turns OFF the VS10xx into low power reset."));
+  Serial.println(F(" [o] turns ON the VS10xx out of low power reset."));
   Serial.println(F(" [D] to toggle SM_DIFF between inphase and differential output"));
-  Serial.println(F(" [S] Show State of Device."));
   Serial.println(F(" [V] Enable VU meter Test."));
+  Serial.println(F(" [B] Increament bass frequency by 10Hz"));
+  Serial.println(F(" [C] Increament bass amplitude by 1dB"));
+  Serial.println(F(" [T] Increament treble frequency by 1000Hz"));
+  Serial.println(F(" [E] Increament treble amplitude by 1dB"));
+#endif
   Serial.println(F(" [h] this help"));
 }
 

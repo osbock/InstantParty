@@ -37,6 +37,7 @@ enum state_m {
   loading,
   ready,
   playback,
+  playMIDIbeep,
   paused_playback,
   testing_memory,
   testing_sinewave,
@@ -669,6 +670,15 @@ class SFEMP3Shield {
     uint8_t vs_init();
     void setVolume(uint8_t, uint8_t);
     void setVolume(uint16_t);
+    void setVolume(uint8_t);
+    uint16_t getTrebleFrequency();
+    int8_t  getTrebleAmplitude();
+    uint16_t getBassFrequency();
+    int8_t getBassAmplitude();
+    void setTrebleFrequency(uint16_t);
+    void setTrebleAmplitude(int8_t);
+    void setBassFrequency(uint16_t);
+    void setBassAmplitude(uint8_t);
     void setPlaySpeed(uint16_t);
     uint16_t getPlaySpeed();
     uint16_t getVolume();
@@ -705,11 +715,13 @@ class SFEMP3Shield {
     int8_t getVUmeter();
     int8_t setVUmeter(int8_t);
     int16_t getVUlevel();
+    void SendSingleMIDInote();
 
   private:
     static SdFile track;
     static void refill();
     static void flush_cancel(flush_m);
+    static void spiInit();
     static void cs_low();
     static void cs_high();
     static void dcs_low();
@@ -731,7 +743,8 @@ class SFEMP3Shield {
     static state_m playing_state;
 
 /** \brief Rate of the SPI to be used with communicating to the VSdsp.*/
-    static uint16_t spiRate;
+    static uint16_t spi_Read_Rate;
+    static uint16_t spi_Write_Rate;
 
 /** \brief Buffer for moving data between Filehandle and VSdsp.*/
     static uint8_t mp3DataBuffer[32];
@@ -747,6 +760,34 @@ class SFEMP3Shield {
 
 /** \brief contains a local value of the VSdsp's master volume Right channels*/
     uint8_t VolR;
+
+/**
+ * \brief A handler for accessing nibbles of the SCI_BASS word.
+ *
+ * a union of the SCI_BASS value and of its nibbles for 
+ * Treble/Bass and Freq/Amp.
+ */
+union sci_bass_m {
+
+  /**
+   * \brief whole word value
+   *
+   * allows access and handeling of whole uint16_t (aka word) value
+   */
+    uint16_t word;
+
+  /**
+   * \brief individual Nibbles
+   *
+   * allows access and handeling of individual nibble values
+   */
+    struct {
+      uint8_t  Bass_Freqlimt    : 4; // 0..3
+      uint8_t  Bass_Amplitude   : 4; // 4..7
+      uint8_t  Treble_Freqlimt  : 4; // 8..11
+       int8_t  Treble_Amplitude : 4; // 12..15
+    }nibble;
+  } ;
 };
 
 //------------------------------------------------------------------------------

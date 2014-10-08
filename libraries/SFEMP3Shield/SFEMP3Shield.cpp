@@ -40,6 +40,47 @@ PROGMEM const uint16_t bitrate_table[15][6] = {
                  {448,384,320,256,160,160}  //1110
                };
 
+/*
+ * Format of a MIDI file into a char arrar. Simply one note on and then off.
+*/
+// MIDI Event Specifics
+#define MIDI_NOTE_ON             9
+#define MIDI_NOTE_OFF            8
+
+// MIDI File structure
+// Header Chunk
+#define MIDI_HDR_CHUNK_ID     0x4D, 0x54, 0x68, 0x64  // const for MIDI
+#define MIDI_CHUNKSIZE           0,    0,    0,    6
+#define MIDI_FORMAT              0,    0              // VSdsp only support Format 0!
+#define MIDI_NUMBER_OF_TRACKS    0,    1              // ergo must be 1 track
+#define MIDI_TIME_DIVISION       0,   96
+// Track Chunk
+#define MIDI_TRACK_CHUNK_ID   0x4D, 0x54, 0x72, 0x6B  // const for MIDI
+#define MIDI_CHUNK_SIZE          0,    0,    0, sizeof(MIDI_EVENT_NOTE_ON) + sizeof(MIDI_EVENT_NOTE_OFF) + sizeof(MIDI_END_OF_TRACK) // hard coded with zero padded
+// Events
+#define MIDI_EVENT_NOTE_ON       0, (MIDI_NOTE_ON<<4) + MIDI_CHANNEL, MIDI_NOTE_NUMBER, MIDI_INTENSITY
+#define MIDI_EVENT_NOTE_OFF   MIDI_NOTE_DURATION, (MIDI_NOTE_OFF<<4) + MIDI_CHANNEL, MIDI_NOTE_NUMBER, MIDI_INTENSITY
+//
+#define MIDI_END_OF_TRACK        0, 0xFF, 0x2F,    0
+
+/**
+ * \brief a MIDI File of one Note
+ *
+ * This is string containing a complete MIDI format 0 file of one Note ON and then Off.
+ *
+ * <A HREF = "http://www.sonicspot.com/guide/midifiles.html" > Description of MIDI file parsing </A>
+ * \note PROGMEM macro forces to Flash space.
+ * \warning This should consume 34 bytes of flash
+ *
+ *
+ * An inline equation @f$ e^{\pi i}+1 = 0 @f$
+ *
+ * A displayed equation: @f[ e^{\pi i}+1 = 0 @f]
+ *
+ *
+ */
+PROGMEM const uint8_t SingleMIDInoteFile[] = {MIDI_HDR_CHUNK_ID, MIDI_CHUNKSIZE, MIDI_FORMAT, MIDI_NUMBER_OF_TRACKS, MIDI_TIME_DIVISION, MIDI_TRACK_CHUNK_ID, MIDI_CHUNK_SIZE, MIDI_EVENT_NOTE_ON, MIDI_EVENT_NOTE_OFF, MIDI_END_OF_TRACK};
+
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 /* Initialize static classes and variables
  */
@@ -57,7 +98,8 @@ state_m  SFEMP3Shield::playing_state;
 /**
  * \brief Initializer for the instance of the SdCard's static member.
  */
-uint16_t SFEMP3Shield::spiRate;
+uint16_t SFEMP3Shield::spi_Read_Rate;
+uint16_t SFEMP3Shield::spi_Write_Rate;
 
 // only needed for specific means of refilling
 #if defined(USE_MP3_REFILL_MEANS) && USE_MP3_REFILL_MEANS == USE_MP3_SimpleTimer
@@ -106,6 +148,11 @@ if (int8_t(sd.vol()->fatType()) == 0) {
   pinMode(MP3_XCS, OUTPUT);
   pinMode(MP3_XDCS, OUTPUT);
   pinMode(MP3_RESET, OUTPUT);
+
+#if PERF_MON_PIN != -1
+  pinMode(PERF_MON_PIN, OUTPUT);
+  digitalWrite(PERF_MON_PIN,HIGH);
+#endif
 
   cs_high();  //MP3_XCS, Init Control Select to deselected
   dcs_high(); //MP3_XDCS, Init Data Select to deselected
@@ -195,7 +242,8 @@ uint8_t SFEMP3Shield::vs_init() {
   //faster than initial allowed spi rate of 1.8MgHz.
 
   // set initial mp3's spi to safe rate
-  spiRate = SPI_CLOCK_DIV16; // initial contact with VS10xx at slow rate
+  spi_Read_Rate  = SPI_CLOCK_DIV16;
+  spi_Write_Rate = SPI_CLOCK_DIV16;
   delay(10);
 
    //Let's check the status of the VS1053
@@ -220,7 +268,16 @@ uint8_t SFEMP3Shield::vs_init() {
   Mp3WriteRegister(SCI_CLOCKF, 0x6000); //Set multiplier to 3.0x
   //Internal clock multiplier is now 3x.
   //Therefore, max SPI speed is 52MgHz.
-  spiRate = SPI_CLOCK_DIV4; //use safe SPI rate of (16MHz / 4 = 4MHz)
+
+#if (F_CPU == 16000000 )
+  spi_Read_Rate  = SPI_CLOCK_DIV4; //use safe SPI rate of (16MHz / 4 = 4MHz)
+  spi_Write_Rate = SPI_CLOCK_DIV2; //use safe SPI rate of (16MHz / 2 = 8MHz)
+#else
+  // must be 8000000
+  spi_Read_Rate  = SPI_CLOCK_DIV2; //use safe SPI rate of (8MHz / 2 = 4MHz)
+  spi_Write_Rate = SPI_CLOCK_DIV2; //use safe SPI rate of (8MHz / 2 = 4MHz)
+#endif
+
   delay(10); // settle time
 
   //test reading after data rate change
@@ -394,7 +451,8 @@ uint8_t SFEMP3Shield::disableTestSineWave() {
 
   //Wait for DREQ to go high indicating IC is available
   while(!digitalRead(MP3_DREQ)) ;
-  //Select control
+
+  //Select SPI Control channel
   dcs_low();
 
   //SDI consists of instruction byte, address byte, and 16-bit data word.
@@ -408,7 +466,8 @@ uint8_t SFEMP3Shield::disableTestSineWave() {
   SPI.transfer(0x00);
   while(!digitalRead(MP3_DREQ)) ; //Wait for DREQ to go high indicating command is complete
 
-  dcs_high(); //Deselect Control
+  //Deselect SPI Control channel
+  dcs_high();
 
   // turn test mode bit off
   Mp3WriteRegister(SCI_MODE, Mp3ReadRegister(SCI_MODE) & ~SM_TESTS);
@@ -455,8 +514,10 @@ uint16_t SFEMP3Shield::memoryTest() {
 //  for(int y = 0 ; y <= 1 ; y++) { // need to do it twice if it was already done once before
     //Wait for DREQ to go high indicating IC is available
     while(!digitalRead(MP3_DREQ)) ;
-    //Select control
+
+    //Select SPI Control channel
     dcs_low();
+
     //SCI consists of instruction byte, address byte, and 16-bit data word.
     SPI.transfer(0x4D);
     SPI.transfer(0xEA);
@@ -467,7 +528,9 @@ uint16_t SFEMP3Shield::memoryTest() {
     SPI.transfer(0x00);
     SPI.transfer(0x00);
     while(!digitalRead(MP3_DREQ)) ; //Wait for DREQ to go high indicating command is complete
-    dcs_high(); //Deselect Control
+
+    //Deselect SPI Control channel
+    dcs_high();
 //  }
   delay(250);
 
@@ -502,6 +565,21 @@ void SFEMP3Shield::setVolume(uint16_t data) {
   union twobyte val;
   val.word = data;
   setVolume(val.byte[1], val.byte[0]);
+}
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Overload function of SFEMP3Shield::setVolume(leftchannel, rightchannel)
+ *
+ * \param[in] uint8_t to be placed into both Left and Right
+ *
+ * calls SFEMP3Shield::setVolume placing the input into both the left channel
+ * and right channels.
+ *
+ * As specified by Data Sheet Section 8.7.11
+ */
+void SFEMP3Shield::setVolume(uint8_t data) {
+  setVolume(data, data);
 }
 
 //------------------------------------------------------------------------------
@@ -545,6 +623,183 @@ uint16_t SFEMP3Shield::getVolume() {
 }
 // @}
 // Volume_Group
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// @{
+// Base_Treble_Group
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Get the current Treble Frequency limit from the VS10xx chip
+ *
+ * \return int16_t of frequency limit in Hertz.
+ *
+ */
+uint16_t SFEMP3Shield::getTrebleFrequency()
+{
+  union sci_bass_m sci_base_value;
+  sci_base_value.word = Mp3ReadRegister(SCI_BASS);
+  return (sci_base_value.nibble.Treble_Freqlimt * 1000);
+}
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Get the current Treble Amplitude from the VS10xx chip
+ *
+ * \return int16_t of amplitude (from -8 to 7).
+ *
+ */
+int8_t SFEMP3Shield::getTrebleAmplitude()
+{
+  union sci_bass_m sci_base_value;
+  sci_base_value.word = Mp3ReadRegister(SCI_BASS);
+  return (sci_base_value.nibble.Treble_Amplitude);
+}
+//------------------------------------------------------------------------------
+/**
+ * \brief Get the current Bass Frequency limit from the VS10xx chip
+ *
+ * \return int16_t of bass frequency limit in Hertz.
+ *
+ */
+uint16_t SFEMP3Shield::getBassFrequency()
+{
+  union sci_bass_m sci_base_value;
+  sci_base_value.word = Mp3ReadRegister(SCI_BASS);
+  return (sci_base_value.nibble.Bass_Freqlimt * 10);
+}
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Get the current Bass boost amplitude from the VS10xx chip
+ *
+ * \return int16_t of bass bost amplitude in dB.
+ *
+ * \note Any value greater then zero enables the Bass Enhancer VSBE is a 
+ * powerful bass boosting DSP algorithm, which tries to take the most out 
+ * of the users earphones without causing clipping.
+ *
+ */
+int8_t SFEMP3Shield::getBassAmplitude()
+{
+  union sci_bass_m sci_base_value;
+  sci_base_value.word = Mp3ReadRegister(SCI_BASS);
+  return (sci_base_value.nibble.Bass_Amplitude);
+}
+//------------------------------------------------------------------------------
+/**
+ * \brief Set the current treble frequency limit in VS10xx chip
+ *
+ * \param[in] Treble cutoff frequency limit in Hertz.
+ *
+ * \note The upper and lower limits of this parameter is checked.
+ */
+void SFEMP3Shield::setTrebleFrequency(uint16_t frequency)
+{
+  union sci_bass_m sci_base_value;
+
+  frequency /= 1000;
+
+  if(frequency < 1)
+  {
+      frequency = 1;
+  }
+  else if(frequency > 15)
+  {
+      frequency = 15;
+  }
+  
+  sci_base_value.word = Mp3ReadRegister(SCI_BASS);
+  sci_base_value.nibble.Treble_Freqlimt = frequency;
+  Mp3WriteRegister(SCI_BASS, sci_base_value.word); 
+}
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Set the current Treble Amplitude in VS10xx chip
+ *
+ * \param[in] Treble amplitude in dB from -8 to 7.
+ *
+ * \note The upper and lower limits of this parameter is checked. 
+ */
+void SFEMP3Shield::setTrebleAmplitude(int8_t amplitude)
+{
+  union sci_bass_m sci_base_value;
+
+
+  if(amplitude < -8)
+  {
+      amplitude = -8;
+  }
+  else if(amplitude > 7)
+  {
+      amplitude = 7;
+  }
+
+  sci_base_value.word = Mp3ReadRegister(SCI_BASS);
+  sci_base_value.nibble.Treble_Amplitude = amplitude;
+  Mp3WriteRegister(SCI_BASS, sci_base_value.word); 
+}
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Set the current Bass Boost Frequency limit cutoff in VS10xx chip
+ *
+ * \param[in] Bass Boost frequency cutoff limit in Hertz (20Hz to 150Hz).
+ *
+ * \note The upper and lower limits of this parameter is checked. 
+ */
+void SFEMP3Shield::setBassFrequency(uint16_t frequency)
+{
+  union sci_bass_m sci_base_value;
+
+  frequency /= 10;
+
+  if(frequency < 2)
+  {
+      frequency = 2;
+  }
+  else if(frequency > 15)
+  {
+      frequency = 15;
+  }
+
+  sci_base_value.word = Mp3ReadRegister(SCI_BASS);
+  sci_base_value.nibble.Bass_Freqlimt = frequency;
+  Mp3WriteRegister(SCI_BASS, sci_base_value.word); 
+}
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Set the current Bass Boost amplitude in VS10xx chip
+ *
+ * \param[in] Bass Boost amplitude in dB (0dB to 15dB).
+ *
+ * \note Any value greater then zero enables the Bass Enhancer VSBE is a 
+ * powerful bass boosting DSP algorithm, which tries to take the most out 
+ * of the users earphones without causing clipping.
+ *
+ * \note The upper and lower limits of this parameter is checked. 
+ */
+void SFEMP3Shield::setBassAmplitude(uint8_t amplitude)
+{
+  union sci_bass_m sci_base_value;
+
+  if(amplitude < 0)
+  {
+      amplitude = 0;
+  }
+  else if(amplitude > 15)
+  {
+      amplitude = 15;
+  }
+
+  sci_base_value.word = Mp3ReadRegister(SCI_BASS);
+  sci_base_value.nibble.Bass_Amplitude = amplitude;
+  Mp3WriteRegister(SCI_BASS, sci_base_value.word); 
+}
+// @}
+// Base_Treble_Group
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // @{
@@ -1462,15 +1717,32 @@ void SFEMP3Shield::setBitRate(uint16_t bitr){
 
 //------------------------------------------------------------------------------
 /**
+ * \brief Initialize the SPI for VS10xx use.
+ *
+ * Primative function to configure the SPI's BitOrder, DataMode and ClockDivider to that of
+ * the current VX10xx.
+ *
+ * \warning This sets the rate fast for write, too fast for reading. In the case of a subsequent SPI.transfer that is reading back data followup with a SPI.setClockDivider(spi_Read_Rate); as not to get gibberish.
+*/
+void SFEMP3Shield::spiInit() {
+  //Set SPI bus for write
+  SPI.setBitOrder(MSBFIRST);
+  SPI.setDataMode(SPI_MODE0);
+  SPI.setClockDivider(spi_Write_Rate);
+}
+
+//------------------------------------------------------------------------------
+/**
  * \brief Select Control Channel
  *
  * Primative function to configure the SPI's Mode and rate control to that of
  * the current VX10xx. Then select the VS10xx's Control Chip Select as per
  * defined by MP3_XCS.
+ *
+ * \warning This uses spiInit() which sets the rate fast for write, too fast for reading. In the case of a subsequent SPI.transfer that is reading back data followup with a SPI.setClockDivider(spi_Read_Rate); as not to get gibberish.
  */
 void SFEMP3Shield::cs_low() {
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setClockDivider(spiRate); //Set SPI bus speed to 1MHz (16MHz / 16 = 1MHz)
+  spiInit();
   digitalWrite(MP3_XCS, LOW);
 }
 
@@ -1492,10 +1764,11 @@ void SFEMP3Shield::cs_high() {
  * Primative function to configure the SPI's Mode and rate control to that of
  * the current VX10xx. Then select the VS10xx's Data Chip Select as per
  * defined by MP3_XDCS.
+ *
+ * \warning This uses spiInit() which sets the rate fast for write, too fast for reading. In the case of a subsequent SPI.transfer that is reading back data followup with a SPI.setClockDivider(spi_Read_Rate); as not to get gibberish.
  */
 void SFEMP3Shield::dcs_low() {
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setClockDivider(spiRate); //Set SPI bus speed to 1MHz (16MHz / 16 = 1MHz)
+  spiInit();
   digitalWrite(MP3_XDCS, LOW);
 }
 
@@ -1548,8 +1821,8 @@ void SFEMP3Shield::Mp3WriteRegister(uint8_t addressbyte, uint8_t highbyte, uint8
 
   //Wait for DREQ to go high indicating IC is available
   while(!digitalRead(MP3_DREQ)) ;
-  //Select control
-  cs_low();
+
+  cs_low(); //Select control
 
   //SCI consists of instruction byte, address byte, and 16-bit data word.
   SPI.transfer(0x02); //Write instruction
@@ -1592,7 +1865,9 @@ uint16_t SFEMP3Shield::Mp3ReadRegister (uint8_t addressbyte){
     disableRefill();
 
   while(!digitalRead(MP3_DREQ)) ; //Wait for DREQ to go high indicating IC is available
+
   cs_low(); //Select control
+  SPI.setClockDivider(spi_Read_Rate); // correct the clock speed as from cs_low()
 
   //SCI consists of instruction byte, address byte, and 16-bit data word.
   SPI.transfer(0x03);  //Read instruction
@@ -1629,6 +1904,10 @@ uint16_t SFEMP3Shield::Mp3ReadRegister (uint8_t addressbyte){
 uint16_t SFEMP3Shield::Mp3ReadWRAM (uint16_t addressbyte){
 
   unsigned short int tmp1,tmp2;
+
+  //Set SPI bus for write
+  spiInit();
+  SPI.setClockDivider(spi_Read_Rate);
 
   Mp3WriteRegister(SCI_WRAMADDR, addressbyte);
   tmp1 = Mp3ReadRegister(SCI_WRAM);
@@ -1696,8 +1975,16 @@ void SFEMP3Shield::available() {
 void SFEMP3Shield::refill() {
 
   //Serial.println(F("filling"));
+#if PERF_MON_PIN != -1
+  digitalWrite(PERF_MON_PIN,LOW);
+#endif
 
-  while(digitalRead(MP3_DREQ)){
+  // no need to keep interrupts blocked, allow other ISR such as timer0 to continue
+#if !defined(USE_MP3_REFILL_MEANS) || USE_MP3_REFILL_MEANS == USE_MP3_INTx
+  sei();
+#endif
+
+  while(digitalRead(MP3_DREQ)) {
 
     if(!track.read(mp3DataBuffer, sizeof(mp3DataBuffer))) { //Go out to SD card and try reading 32 new bytes of the song
       track.close(); //Close out this track
@@ -1715,6 +2002,9 @@ void SFEMP3Shield::refill() {
 
 
     //Once DREQ is released (high) we now feed 32 bytes of data to the VS1053 from our SD read buffer
+#if !defined(USE_MP3_REFILL_MEANS) || USE_MP3_REFILL_MEANS == USE_MP3_INTx
+    cli(); // allow transfer to occur with out interruption.
+#endif
     dcs_low(); //Select Data
     for(uint8_t y = 0 ; y < sizeof(mp3DataBuffer) ; y++) {
       //while(!digitalRead(MP3_DREQ)); // wait until DREQ is or goes high // turns out it is not needed.
@@ -1723,7 +2013,63 @@ void SFEMP3Shield::refill() {
 
     dcs_high(); //Deselect Data
     //We've just dumped 32 bytes into VS1053 so our SD read buffer is empty. go get more data
+#if !defined(USE_MP3_REFILL_MEANS) || USE_MP3_REFILL_MEANS == USE_MP3_INTx
+    sei();
+#endif
   }
+
+#if PERF_MON_PIN != -1
+  digitalWrite(PERF_MON_PIN,HIGH);
+#endif
+}
+
+//------------------------------------------------------------------------------
+/**
+ * \brief Play hardcoded MIDI file
+ *
+ * This the primative function to fill the VSdsp's buffers quicly. The intention
+ * is to send a quick MIDI file of a single note on and off. This can be used 
+ * responses to buttons and such. Where the MIDI file is short enough to be 
+ * stored into an array that can be delivered via SPI to the VSdsp's data stream 
+ * buffer. Waiting for DREQ every 32 bytes.
+ */
+void SFEMP3Shield::SendSingleMIDInote() {
+
+  if(!digitalRead(MP3_RESET))
+    return;
+
+  //cancel and store current state to restore after
+  disableRefill();
+  state_m prv_state = playing_state;
+  playing_state = playMIDIbeep;
+  
+  // need to quickly purge the exiting formate of decoder.
+  flush_cancel(none);
+
+  // wait for VS1053 to be available.
+  while(!digitalRead(MP3_DREQ)); 
+
+#if !defined(USE_MP3_REFILL_MEANS) || USE_MP3_REFILL_MEANS == USE_MP3_INTx
+  cli(); // allow transfer to occur with out interruption.
+#endif
+
+  dcs_low(); //Select Data
+  for(uint8_t y = 0 ; y < sizeof(SingleMIDInoteFile) ; y++) { // sizeof(mp3DataBuffer)
+    // Every 32 check if not ready for next buffer chunk.
+    if ( !(y % 32) ) {
+      while(!digitalRead(MP3_DREQ));
+    }
+    SPI.transfer( pgm_read_byte_near( &(SingleMIDInoteFile[y]))); // Send next byte
+  }
+  dcs_high(); //Deselect Data
+
+#if !defined(USE_MP3_REFILL_MEANS) || USE_MP3_REFILL_MEANS == USE_MP3_INTx
+  sei();  // renable interrupts for other processes
+#endif
+
+  flush_cancel(none); // need to quickly purge the exiting format of decoder.
+  playing_state = prv_state;
+  enableRefill();
 }
 
 //------------------------------------------------------------------------------
@@ -1783,6 +2129,7 @@ void SFEMP3Shield::flush_cancel(flush_m mode) {
   int8_t endFillByte = (int8_t) (Mp3ReadWRAM(para_endFillByte) & 0xFF);
 
   if((mode == post) || (mode == both)) {
+
     dcs_low(); //Select Data
     for(int y = 0 ; y < 2052 ; y++) {
       while(!digitalRead(MP3_DREQ)); // wait until DREQ is or goes high
@@ -1795,6 +2142,7 @@ void SFEMP3Shield::flush_cancel(flush_m mode) {
   {
 //    Mp3WriteRegister(SCI_MODE, SM_LINE1 | SM_SDINEW | SM_CANCEL); // old way of SCI_MODE WRITE.
     Mp3WriteRegister(SCI_MODE, (Mp3ReadRegister(SCI_MODE) | SM_CANCEL));
+
     dcs_low(); //Select Data
     for(int y = 0 ; y < 32 ; y++) {
       while(!digitalRead(MP3_DREQ)); // wait until DREQ is or goes high
