@@ -60,7 +60,7 @@ void loop() {
       Serial.println("trigger disabled");
       digitalWrite(LEDPIN,LOW);
     }
-    delay(100);
+    delay(500); //simple debounce
   }
   if (MP3player.isPlaying()){
     if (millis() -time_started > TIMETOPLAY){
