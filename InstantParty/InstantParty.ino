@@ -22,9 +22,9 @@ SFEMP3Shield MP3player; // Create Mp3 library object
 const uint8_t volume = 0; // MP3 Player volume 0=max, 255=lowest (off)
 const uint16_t monoMode = 0;  // Mono setting 0=off, 3=max
 
-int numtracks = 2;
+int numtracks = 6;
 int trackplaying=1;
-#define TIMETOPLAY 10000
+#define TIMETOPLAY 15000
 long time_elapsed; // keep track of how long the track has played.
 unsigned long time_started;
 boolean triggerEnabled = false;
@@ -60,7 +60,7 @@ void loop() {
       Serial.println("trigger disabled");
       digitalWrite(LEDPIN,LOW);
     }
-    delay(1000); // simple debounce
+    delay(100);
   }
   if (MP3player.isPlaying()){
     if (millis() -time_started > TIMETOPLAY){
@@ -87,7 +87,7 @@ void loop() {
     time_started = millis();
     
   }
-  delay(1000);
+  //delay(1000);
 }
 
 // initSD() initializes the SD card and checks for an error.
